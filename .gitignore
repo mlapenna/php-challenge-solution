@@ -1,0 +1,7 @@
+.env
+vendor/
+coverage/
+.phpunit.cache/
+.idea/
+.DS_Store
+
