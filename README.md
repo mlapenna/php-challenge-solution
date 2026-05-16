@@ -15,6 +15,48 @@ Requirements:
 - Docker
 - Docker Compose
 
+## Submission Workflow
+
+Do not push changes to this starter repository.
+
+Create a repository under your own GitHub account, push your completed solution there, and share the repository link with the reviewer.
+
+Recommended commands:
+
+```bash
+git clone git@github.com:joao-devsignal/php-challenge.git php-challenge-solution
+cd php-challenge-solution
+git remote rename origin starter
+```
+
+Create an empty repository on GitHub under your account. Do not initialize it with a README, `.gitignore`, or license. Then connect your local clone to that repository:
+
+```bash
+git remote add origin git@github.com:YOUR_GITHUB_USERNAME/php-challenge-solution.git
+git push -u origin main
+```
+
+If you use HTTPS instead of SSH:
+
+```bash
+git remote add origin https://github.com/YOUR_GITHUB_USERNAME/php-challenge-solution.git
+git push -u origin main
+```
+
+After finishing the challenge:
+
+```bash
+git add .
+git commit -m "Complete PHP visitor analytics challenge"
+git push
+```
+
+Send the reviewer the URL of your repository, for example:
+
+```text
+https://github.com/YOUR_GITHUB_USERNAME/php-challenge-solution
+```
+
 Start the app:
 
 ```bash
