@@ -66,20 +66,27 @@ final class VisitorAnalyticsRepository
         $fromDate = $rules['from'] . ' 00:00:00';
         $toDate   = $rules['to'] . ' 23:59:59';
 
-        $params = [
-            'account_id'      => $accountId,
-            'from_date'       => $fromDate,
-            'to_date'         => $toDate,
-            'visited_path'    => $rules['visited_path'],
-            'from_date_path'  => $fromDate,
-            'to_date_path'    => $toDate,
-            'min_page_views'  => $rules['min_page_views'],
-            'limit'           => $limit,
-        ];
-
         $sql  = $this->buildSegmentPreviewSql((bool) $rules['identified_only']);
         $stmt = $this->pdo->prepare($sql);
-        $stmt->execute($params);
+
+        // from_date/to_date appear twice because PDO named parameters
+        // can only be bound once per execute() call
+        $bindings = [
+            'account_id'     => [$accountId,               PDO::PARAM_INT],
+            'from_date'      => [$fromDate],
+            'to_date'        => [$toDate],
+            'visited_path'   => [$rules['visited_path']],
+            'from_date_path' => [$fromDate],
+            'to_date_path'   => [$toDate],
+            'min_page_views' => [$rules['min_page_views'], PDO::PARAM_INT],
+            'limit'          => [$limit,                   PDO::PARAM_INT],
+        ];
+
+        foreach ($bindings as $name => $binding) {
+            $stmt->bindValue($name, $binding[0], $binding[1] ?? PDO::PARAM_STR);
+        }
+
+        $stmt->execute();
         $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
 
         return $this->formatSegmentPreviewResult($rows);
