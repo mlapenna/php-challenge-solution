@@ -90,6 +90,24 @@ final class VisitorAnalyticsRepository
         $identifiedFilter = $identifiedOnly ? 'AND ie.id IS NOT NULL' : '';
 
         return <<<SQL
+            -- Pre-compute the latest identity event per visitor in one pass
+            -- instead of a correlated subquery that fires once per row.
+            WITH latest_identity AS (
+                SELECT id, visitor_id, email, company
+                FROM (
+                    SELECT
+                        id,
+                        visitor_id,
+                        email,
+                        company,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY visitor_id
+                            ORDER BY occurred_at DESC, id DESC
+                        ) AS rn
+                    FROM identity_events
+                ) ranked
+                WHERE rn = 1
+            )
             SELECT
                 visitor_id,
                 email,
@@ -108,15 +126,7 @@ final class VisitorAnalyticsRepository
                 INNER JOIN page_views pv
                     ON pv.visitor_id = v.id
                     AND pv.occurred_at BETWEEN :from_date AND :to_date
-                -- Resolve latest identity event deterministically:
-                LEFT JOIN identity_events ie
-                    ON ie.id = (
-                        SELECT ie2.id
-                        FROM identity_events ie2
-                        WHERE ie2.visitor_id = v.id
-                        ORDER BY ie2.occurred_at DESC, ie2.id DESC
-                        LIMIT 1
-                    )
+                LEFT JOIN latest_identity ie ON ie.visitor_id = v.id
                 WHERE v.account_id = :account_id
                   $identifiedFilter
                   AND EXISTS (
