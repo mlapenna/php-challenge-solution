@@ -27,17 +27,16 @@ final class VisitorAnalyticsRepository
             <<<'SQL'
             SELECT
                 v.external_id AS visitor_id,
-                MAX(ie.email) AS email,
-                MAX(ie.company) AS company,
-                COUNT(pv.id) AS page_view_count,
+                (SELECT email FROM identity_events WHERE visitor_id = v.id ORDER BY occurred_at DESC LIMIT 1) AS email,
+                (SELECT company FROM identity_events WHERE visitor_id = v.id ORDER BY occurred_at DESC LIMIT 1) AS company,
+                COUNT(DISTINCT pv.id) AS page_view_count,
                 MAX(pv.occurred_at) AS last_seen_at,
-                COUNT(pv.id) + (CASE WHEN MAX(ie.email) IS NULL THEN 0 ELSE 10 END) AS engagement_score
+                COUNT(DISTINCT pv.id) + (CASE WHEN MAX(ie.id) IS NULL THEN 0 ELSE 10 END) AS engagement_score
             FROM visitors v
-            LEFT JOIN page_views pv ON pv.visitor_id = v.id
+            INNER JOIN page_views pv ON pv.visitor_id = v.id
             LEFT JOIN identity_events ie ON ie.visitor_id = v.id
             WHERE v.account_id = :account_id
-              AND pv.occurred_at >= :from_date
-              OR pv.occurred_at <= :to_date
+              AND pv.occurred_at BETWEEN :from_date AND :to_date
             GROUP BY v.id, v.external_id
             ORDER BY last_seen_at DESC, engagement_score DESC
             SQL
@@ -51,5 +50,106 @@ final class VisitorAnalyticsRepository
 
         return $statement->fetchAll();
     }
-}
 
+    /**
+     * Returns a preview of visitors matching the given segment rules.
+     *
+     * Filters by account, date range, visited path (visitor must have at least
+     * one page view on that path within the range), minimum total page views,
+     * and optionally restricts to identified visitors only.
+     *
+     * @param array<string, mixed> $rules
+     * @return array{count: int, visitors: list<array<string, mixed>>}
+     */
+    public function segmentPreview(int $accountId, array $rules, int $limit): array
+    {
+        $fromDate = $rules['from'] . ' 00:00:00';
+        $toDate   = $rules['to'] . ' 23:59:59';
+
+        $params = [
+            'account_id'      => $accountId,
+            'from_date'       => $fromDate,
+            'to_date'         => $toDate,
+            'visited_path'    => $rules['visited_path'],
+            'from_date_path'  => $fromDate,
+            'to_date_path'    => $toDate,
+            'min_page_views'  => $rules['min_page_views'],
+            'limit'           => $limit,
+        ];
+
+        $sql  = $this->buildSegmentPreviewSql((bool) $rules['identified_only']);
+        $stmt = $this->pdo->prepare($sql);
+        $stmt->execute($params);
+        $rows = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        return $this->formatSegmentPreviewResult($rows);
+    }
+
+    private function buildSegmentPreviewSql(bool $identifiedOnly): string
+    {
+        $identifiedFilter = $identifiedOnly ? 'AND ie.id IS NOT NULL' : '';
+
+        return <<<SQL
+            SELECT
+                visitor_id,
+                email,
+                company,
+                page_view_count,
+                last_seen_at,
+                COUNT(*) OVER() AS total_count
+            FROM (
+                SELECT
+                    v.external_id AS visitor_id,
+                    ie.email,
+                    ie.company,
+                    COUNT(DISTINCT pv.id) AS page_view_count,
+                    MAX(pv.occurred_at) AS last_seen_at
+                FROM visitors v
+                INNER JOIN page_views pv
+                    ON pv.visitor_id = v.id
+                    AND pv.occurred_at BETWEEN :from_date AND :to_date
+                -- Resolve latest identity event deterministically:
+                LEFT JOIN identity_events ie
+                    ON ie.id = (
+                        SELECT ie2.id
+                        FROM identity_events ie2
+                        WHERE ie2.visitor_id = v.id
+                        ORDER BY ie2.occurred_at DESC, ie2.id DESC
+                        LIMIT 1
+                    )
+                WHERE v.account_id = :account_id
+                  $identifiedFilter
+                  AND EXISTS (
+                      SELECT 1
+                      FROM page_views pv_path
+                      WHERE pv_path.visitor_id = v.id
+                        AND pv_path.occurred_at BETWEEN :from_date_path AND :to_date_path
+                        AND pv_path.path = :visited_path
+                  )
+                GROUP BY v.id, v.external_id, ie.email, ie.company
+                HAVING COUNT(DISTINCT pv.id) >= :min_page_views
+            ) grouped
+            ORDER BY last_seen_at DESC, page_view_count DESC, visitor_id
+            LIMIT :limit
+        SQL;
+    }
+
+    /**
+     * @param list<array<string, mixed>> $rows
+     * @return array{count: int, visitors: list<array<string, mixed>>}
+     */
+    private function formatSegmentPreviewResult(array $rows): array
+    {
+        $totalCount = (int) ($rows[0]['total_count'] ?? 0);
+
+        foreach ($rows as &$row) {
+            unset($row['total_count']);
+        }
+        unset($row);
+
+        return [
+            'count'    => $totalCount,
+            'visitors' => $rows,
+        ];
+    }
+}

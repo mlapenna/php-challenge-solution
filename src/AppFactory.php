@@ -6,6 +6,7 @@ namespace Challenge;
 
 use Challenge\Database\ConnectionFactory;
 use Challenge\Http\JsonResponder;
+use Challenge\Http\SegmentPreviewRequest;
 use Challenge\Repositories\VisitorAnalyticsRepository;
 use Psr\Http\Message\ResponseInterface as Response;
 use Psr\Http\Message\ServerRequestInterface as Request;
@@ -35,8 +36,8 @@ final class AppFactory
             $accountId = (int) $args['accountId'];
             $query = $request->getQueryParams();
 
-            $from = is_string($query['from'] ?? null) ? $query['from'] : '';
-            $to = is_string($query['to'] ?? null) ? $query['to'] : '';
+            $from = is_string($query['from'] ?? null) ? trim($query['from']) : '';
+            $to = is_string($query['to'] ?? null) ? trim($query['to']) : '';
 
             $visitors = $repository->activeVisitors($accountId, $from, $to);
 
@@ -45,11 +46,26 @@ final class AppFactory
             ]);
         });
 
-        $app->post('/api/accounts/{accountId}/segments/preview', function (Request $request, Response $response): Response {
+        $app->post('/api/accounts/{accountId}/segments/preview', function (Request $request, Response $response, array $args) use ($repository): Response {
+            $previewRequest = new SegmentPreviewRequest((array) $request->getParsedBody());
+
+            if (!$previewRequest->isValid()) {
+                return JsonResponder::json($response, [
+                    'error' => 'validation_failed',
+                    'fields' => $previewRequest->errors,
+                ], 422);
+            }
+
+            $result = $repository->segmentPreview(
+                (int) $args['accountId'],
+                $previewRequest->toRules(),
+                $previewRequest->limit,
+            );
+
             return JsonResponder::json($response, [
-                'error' => 'not_implemented',
-                'message' => 'Segment preview is intentionally incomplete for this assessment.',
-            ], 501);
+                'count' => $result['count'],
+                'visitors' => $result['visitors'],
+            ]);
         });
 
         $app->addErrorMiddleware(true, true, true);
@@ -57,4 +73,3 @@ final class AppFactory
         return $app;
     }
 }
-
